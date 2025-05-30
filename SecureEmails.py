@@ -2,6 +2,8 @@ import os.path # permite obtener el path, os es del sistema operativo.
 import base64
 import re
 import mimetypes # link documentacion https://mimetype.io/all-types
+import requests
+import argparse
 from datetime import datetime
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -62,26 +64,37 @@ def search_words(text):
   for w in word:
     #usando comprension de lista
     #encierro entre \b \b para que ejemplo .contraseña: lo tome correctamente! ya que no siempre las cosas esta separadas por respectivos espacios
-    # la otra es que uso re.escape para no tomar quizas simbolos como * o de regedex y que sean interpetados (regedex inyection) por lo tanto re.escape toma literalmente el string
+    # la otra es que uso re.escape para no tomar quizas simbolos como * o de regedex y que sean interpetados (regedex inyection) por lo tanto re.escape toma literalmente el string https://ssojet.com/compare-escaping/
     # r -> permite tomar el caracter como si fuera \caracter, tomandolo en crudo
     # f permite insertar {variable externa}
     matches_critical = [critical for critical in CRITICAL_WORDS if re.search(rf"\b{re.escape(critical)}\b", w)]
     if matches_critical: return matches_critical[0]
   return None
 
+#creo los mensajes para despues usarlos donde los necesite
 def get_message_critical_word(header, sender, critical_word):
   if not header: header="\'No subject\'"
-  return ("\nCritical word -"+ critical_word + "- from " + sender + " on email with subject " + header)
+  message = ("Critical word -"+ critical_word + "- from " + sender + " on email with subject " + header)
+  return message
 
-def file_handler_alert(warning_message):
+def handler_alert(warning_message):
   #mas manejo de file https://www.w3schools.com/python/python_file_open.asp
   #lo abrimos con "a" para posicionarnos al final del archivo, ya que al escribir sobrescribe encima si estoy al incio.
   with open("alertas.txt", "a") as f:
-    f.write(warning_message+" - Date registered at " + datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    f.write("\n"+warning_message)
     f.close()
 
+def send_notification_to_server(warning_message,url,port):
+    #bonus, envio un post al servidor para que lo registre, no es indispensable para el funcionamiento
+    final_url = url+":"+port
+    warning_message = warning_message+" - Date registered at " + datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    #envio el mensaje como un json
+    #documentacion para el apartado del request: https://requests.readthedocs.io/en/latest/ 
+    requests.post(final_url, json={"Log:":warning_message})
+
 def email_secure(email):
-  #unicamente acepta empresas en la lista blanca, esto sucede debido a que Empresa no es igual a EMPRESA, quiza alguien se suplantacion de identidad con dicho metodo.
+  #unicamente acepta empresas en la lista blanca, esto sucede debido a que Empresa no es igual a EMPRESA, quiza alguien se suplantacion de identidad con dicho metodo. 
+  #la otra es que uso re.escape para no tomar quizas simbolos como * o de regedex y que sean interpetados (regedex inyection) por lo tanto re.escape toma literalmente el string https://ssojet.com/compare-escaping/
   # r -> permite tomar el caracter como si fuera \caracter, tomandolo en crudo
   # f permite insertar {variable externa}
   mail_accepted = [mail for mail in WHITELIST_ENTERPRISE if re.search(rf"@{re.escape(mail)}.com$", email)]
@@ -104,11 +117,23 @@ def check_attach(payload, header,sender):
 def main():
   creds = get_creds()
 
+  #parser es para agregar parametros por CLI, permitiendonos obtener luego lo introducido, en este caso tenemos un por defecto de 5 si no fue especificado
+  #pagina de la documentacion https://docs.python.org/3/library/argparse.html#module-argparse
+  parser = argparse.ArgumentParser()
+  parser.add_argument('--revise', help="amount of emails to revise", type=int) 
+  parser.add_argument('--url', help="url to send notification", type=str) 
+  parser.add_argument('--port', help="port to send notification", type=str) 
+
+  args = parser.parse_args()
+  amount_emails = args.revise or 5 
+  url = args.url or "http://127.0.0.1"
+  port = args.port or str(5555)
+
   try:
     #llamado al gmail API, creando el servicio con las credenciales de OAuth
     service = build("gmail", "v1", credentials=creds)
     #listado de mensajes
-    emails_list = service.users().messages().list(userId="me", maxResults = 5).execute()
+    emails_list = service.users().messages().list(userId="me", maxResults = amount_emails ).execute()
     emails = emails_list.get("messages", [])
 
     if not emails:
@@ -145,8 +170,9 @@ def main():
         critical_word = search_words(header) or search_words(body_message)
         if critical_word:
           warning_message = get_message_critical_word(header, sender, critical_word)
-          file_handler_alert(warning_message)
-          print(warning_message) 
+          print(warning_message)
+          handler_alert(warning_message)
+          send_notification_to_server(warning_message,url,port)
 
         #parte de comprobacion de archivo adjunto
         check_attach(message["payload"], header,sender)
