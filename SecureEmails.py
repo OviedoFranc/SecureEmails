@@ -60,12 +60,18 @@ def decode_body_message(payload):
 def search_words(text):
   word = text.split()
   for w in word:
-    if w in CRITICAL_WORDS:
-      return w
+    #usando comprension de lista
+    #encierro entre \b \b para que ejemplo .contraseña: lo tome correctamente! ya que no siempre las cosas esta separadas por respectivos espacios
+    # la otra es que uso re.escape para no tomar quizas simbolos como * o de regedex y que sean interpetados (regedex inyection) por lo tanto re.escape toma literalmente el string
+    # r -> permite tomar el caracter como si fuera \caracter, tomandolo en crudo
+    # f permite insertar {variable externa}
+    matches_critical = [critical for critical in CRITICAL_WORDS if re.search(rf"\b{re.escape(critical)}\b", w)]
+    if matches_critical: return matches_critical[0]
   return None
 
 def get_message_critical_word(header, sender, critical_word):
-  return ("\nCritical word "+ critical_word + " from " + sender + " on email with subject " + header)
+  if not header: header="\'No subject\'"
+  return ("\nCritical word -"+ critical_word + "- from " + sender + " on email with subject " + header)
 
 def file_handler_alert(warning_message):
   #mas manejo de file https://www.w3schools.com/python/python_file_open.asp
@@ -75,24 +81,25 @@ def file_handler_alert(warning_message):
     f.close()
 
 def email_secure(email):
-  # busca que inicie (^) con cualquier caracter (. y * para las cantidad que quiera) hasta @ + mail que este en la lista blanca y que finalice exactamente con .com (\ es para que interprete exactamente el . y no lo tome como cualquier caracter)
   #unicamente acepta empresas en la lista blanca, esto sucede debido a que Empresa no es igual a EMPRESA, quiza alguien se suplantacion de identidad con dicho metodo.
-  mail_accepted = re.search("^.*@\*({WHITELIST_ENTERPRISE})\.com$",email)
-  if(mail_accepted): return true
-  return false
+  # r -> permite tomar el caracter como si fuera \caracter, tomandolo en crudo
+  # f permite insertar {variable externa}
+  mail_accepted = [mail for mail in WHITELIST_ENTERPRISE if re.search(rf"@{re.escape(mail)}.com$", email)]
+  if mail_accepted: return True
+  return False
 
 #funcion encarga de revisar los adjuntos en los emails
 def check_attach(payload, header,sender):
   #tenemos todos los tipos de mime type en este link https://mimetype.io/all-types por lo cual vemos que podemos obtener su file type
-  for part in payload["parts"]:
-    #si no lo encuentro sigo buscando, sino paso de largo todo el proceso
-    if not "filename" in part and part["filename"]: continue
-    mime_type = part["mimeType"]
-    file_type = mimetypes.guess_extension(mime_type) or "unknown"
-    #si encuentro que esta en la extensiones, mando un mensaje al handler de lo que encontre!
-    if file_type.lower() in CRITICAL_EXTENSIONS:
-      file_handler_alert("File with extension "+file_type+" found on email from "+sender+" with subject"+header)
-
+  if "parts" in payload:
+    for part in payload["parts"]:
+      #si no lo encuentro sigo buscando, sino paso de largo todo el proceso
+      if not "filename" in part and part["filename"]: continue
+      mime_type = part["mimeType"]
+      file_type = mimetypes.guess_extension(mime_type) or "unknown"
+      #si encuentro que esta en la extensiones, mando un mensaje al handler de lo que encontre!
+      if file_type.lower() in CRITICAL_EXTENSIONS:
+        file_handler_alert("File with extension "+file_type+" found on email from "+sender+" with subject"+header)
 
 def main():
   creds = get_creds()
@@ -111,19 +118,19 @@ def main():
       # para cada mensaje tenemos sus componentes https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages?hl=es-419#Message.MessagePart
 
       # ESTRUCTURA GMAIL (VERSIÓN ARBOL)
-      #message -> 
+      # message -> 
       #  id: str               # Ej: "18a2d8f3e4b5c7"
       #  snippet: str          # Vista previa ("Hola...")
       #  payload ->
-      #      headers ->         # METADATOS
+      #     headers ->         # METADATOS
       #        name: FROM | TO | SUBJECT | DATE  # (Siempre strings)
       #        value: str     # Ej: "user@mail.com" o "Asunto importante"
-      #      body? ->           # CUERPO SIMPLE (si no hay parts)
-      #        data: Base64    # Texto plano/HTML codificado
+      #     body? ->           # CUERPO SIMPLE (si no hay parts)
+      #       data: Base64    # Texto plano/HTML codificado
       #       parts? ->          # PARTES (si es multipart/adjuntos)
-      #        mimeType: TEXT/PLAIN | TEXT/HTML | IMAGE/JPEG | APPLICATION/PDF
-      #        body -> data: Base64  # Contenido (o attachmentId si es adjunto)
-      #        filename?: str  # Para adjuntos (ej: "doc.pdf")
+      #         mimeType: TEXT/PLAIN | TEXT/HTML | IMAGE/JPEG | APPLICATION/PDF
+      #         body -> data: Base64  # Contenido (o attachmentId si es adjunto)
+      #         filename?: str  # Para adjuntos (ej: "doc.pdf")
 
       message = service.users().messages().get(userId="me", id=mail["id"]).execute()
       #obtengo primero quien me lo envio
