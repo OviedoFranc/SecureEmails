@@ -4,10 +4,14 @@ Permite revisar correos electrónicos en busqueda de actividad sensible y sospec
 
 ---
 
-## 🔧 Requisitos
+## 🔧 Requisitos & Aclaración
 
 - Python 3.11 o superior
 - pip actualizado
+
+```bash
+SecureEmails_explained_code es el codigo con todo explicado de su funcionamiento en caso de ser necesario para su entendimiento y depuración.
+```
 
 ---
 
@@ -42,8 +46,13 @@ py SecureEmails.py
 | `--revise` | int  | Cantidad de correos electrónicos a revisar | `5`                  |
 | `--url`    | str  | URL del servidor para enviar la alerta     | `"http://127.0.0.1"` |
 | `--port`   | str  | Puerto del servidor para enviar la alerta  | `"5555"`             |
+| `--virustotal`| NaN  | Activa la verificación del archivo contra VirusTotal  | `False`             |
 
 Ejemplo por defecto
 ```bash
-py SecureEmails.py --revise 5 --url http://127.0.0.1 --port 5555
+py SecureEmails.py --revise 5 --url http://127.0.0.1 --port 5555 --virustotal
 ```
+
+## Mapa del Flujo
+
+![Mapa del flujo del Programa](Mapa.png)

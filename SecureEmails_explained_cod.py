@@ -1,8 +1,8 @@
-import os.path
+import os.path # permite obtener el path, os es del sistema operativo.
 import base64
 import re
-import filetype
-import threading
+import filetype #https://pypi.org/project/filetype/ encargado de chequear el magic number
+import threading #https://docs.python.org/es/3.8/library/threading.html documentacion para hilos
 import requests
 import argparse
 from datetime import datetime
@@ -13,27 +13,9 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-"""
-  ACLARACIONES: 
+# aclaracion Google permite que apps de escritorio usen client secret, sin que sean un secreto, no comprometiendo absolutamente nada en este caso particular https://developers.google.com/identity/protocols/oauth2?hl=es-419#installed
 
-    Google permite que apps de escritorio usen client secret, sin que sean un secreto, no comprometiendo absolutamente nada como en este caso particular https://developers.google.com/identity/protocols/oauth2?hl=es-419#installed debido a que es sabido que no los pueden mantener (se pueden utilizar tecnicas de analisis forense para )
-    Para las apps de escritorio se utiliza PKCE (Proof Key for Code Exchange) como capa extra de seguridad, sin embargo por temas de velocidad en el desarollo, presindi de ese flujo de autorización.
-
-    Es totalmente necesario aclarar que las variables utilizadas como publicas hardcodeadas en este caso son una mala practica, se puede extrapolar a un file de entorno o del mismo sistema, sin embargo por temas de practicidad fueron puestas ahi,
-
-    Las KEYS (Publicas y privadas) son de cuentas de prueba, debido a que esto es un challenge por temas de practicidad y velocidad de desarollo las comparto para que se pueda ejecutar el script, en un entorno de produccion esto no se hace, serán eliminadas posteriormente de la entrega del challenge
-
-  DOCUMENTACION: 
-
-    Documentacion de filetype, encargado de revisar el tipo de archivo mediante su magic number( que determina que tipo de extension posee para que pueda leerse): https://pypi.org/project/filetype/
-
-    Documentacion sobre el manejo de hilos en python: https://docs.python.org/es/3.8/library/threading.html documentacion para hilos
-
-    Documentacion del agregado de parametros mediante CLI (parser): https://docs.python.org/3/library/argparse.html#module-argparse
-
-    Documentacion sobre las partes de un Mail https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages?hl=es-419#Message.MessagePart
-"""
-
+# aclaracion 2: es cierto que esto es totalmente una mala practica tener variables hardcodeadas y no en entorno, se encuentran acá a modo de rapido desarollo, las mismas son completamente de prueba y serán eliminadas posteriormente de la entrega del challenge
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 PUBLIC_KEY = "1017525713366-jkriu4gsfepugq0livovv6ntfsiqndop.apps.googleusercontent.com"
 CLIENT_SECRET = "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"
@@ -45,9 +27,6 @@ URL_TO_UPLOAD_FILE = "https://www.virustotal.com/api/v3/files"
 URL_TO_GET_REPORT = "https://www.virustotal.com/api/v3/analyses/"
 
 def get_creds():
-  """
-  Permite crear el flujo de autenticación de OAuth, y otorgandonos las credenciales.
-  """
   client_config = {
         "installed": {
             "client_id": PUBLIC_KEY,
@@ -57,100 +36,75 @@ def get_creds():
             "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"]
         }
   }
+  # esta parte se encarga de crear el flujo de autenticacion, abriendo el navegador para que entremos con nuestra cuenta de google
   flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
   creds = flow.run_local_server(port=0)
   return creds
 
 def decode_body_message(payload):
-  """
-  obtiene los mensajes del cuerpo de un mail buscandolos y decodificandolos
-  Documentacion del cuerpo: https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages?hl=es-419#Message.MessagePart  
-
-  Parámetros:
-        payload (object (MessagePart)): La estructura del correo electrónico analizada en las partes del mensaje.
-  """
-  
+  # https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages?hl=es-419#Message.MessagePart
+  # todo codificado en base64url segun la documentacion
+  # 1: Mensaje con partes (caso clasico cubre la mayoria | RFC 2822 es el formato de emails)
+  # TEXT/PLAIN | TEXT/HTML | IMAGE/JPEG | APPLICATION/PDF 
+  # el cuerpo del mensaje es "attachmentId": string (si posee un archivo adjunto), "size": integer, "data": string
   if "parts" in payload:
       for part in payload["parts"]:
+          # Primero busca texto plano
           if (part["mimeType"] == "text/plain" or "text/html") and "data" in part["body"]:
               return base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8")
-
+    
+  # 2: Mensaje simple (sin partes, version de email simple sin formato)
   if "body" in payload and "data" in payload["body"]:
       return base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8")
-
+    
   return "body can not be redeable"
 
+#funcion encargada de buscar las claves criticas
 def search_words(text):
-  """
-  Permite buscar palabras de CRITICAL_WORDS dentro del texto pasado.
-
-  Parámetros:
-        text (string).
-  """
   word = text.split()
   for w in word:
+    #usando comprension de lista
+    #encierro entre \b \b para que ejemplo .contraseña: lo tome correctamente! ya que no siempre las cosas esta separadas por respectivos espacios
+    # la otra es que uso re.escape para no tomar quizas simbolos como * o de regedex y que sean interpetados (regedex inyection) por lo tanto re.escape toma literalmente el string https://ssojet.com/compare-escaping/
+    # r -> permite tomar el caracter como si fuera \caracter, tomandolo en crudo
+    # f permite insertar {variable externa}
     matches_critical = [critical for critical in CRITICAL_WORDS if re.search(rf"\b{re.escape(critical)}\b", w)]
     if matches_critical: return matches_critical[0]
   return None
 
+#creo los mensajes para despues usarlos donde los necesite
 def get_message_critical_word(header, sender, critical_word):
-  """
-  Permite crear un mensaje de palabra critica encontrada
-
-  Parámetros:
-        header (string): encabezado del mensaje.
-        sender (string): de quien proviene el mensaje.
-        critical_word (string): palabra critica encontrada.
-  """
   if not header: header="\"No subject\""
   message = ("Critical word -"+ critical_word + "- from " + sender + " on email with subject " + header)
   return message
 
 def file_handler_alert(warning_message):
-  """
-  Manejada la funcionalidad del archivo donde se escribirá dado una alerta de palabra critica.
-  Documentacion de funcionalidad de file https://www.w3schools.com/python/python_file_open.asp
-
-  Parámetros:
-        warning_message (string): mensaje de alerta.
-  """
+  #mas manejo de file https://www.w3schools.com/python/python_file_open.asp
+  #lo abrimos con "a" para posicionarnos al final del archivo, ya que al escribir sobrescribe encima si estoy al incio.
   with open("alertas.txt", "a") as f:
     f.write("\n"+warning_message)
     f.close()
 
 def send_notification_to_server(warning_message,url,port):
-  """
-  Funcion encargada de envio de mensajes al servidor.
-  Documentacion de request para manejo de envios al servidor: https://requests.readthedocs.io/en/latest/ 
-  Parámetros:
-        warning_message (string): mensaje de alerta.
-        url (string): url del servidor.
-        port (string): puerto de envio al servidor.
-  """
+    #bonus, envio un post al servidor para que lo registre, no es indispensable para el funcionamiento
     final_url = url+":"+port
     warning_message = warning_message+" - Date registered at " + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    #envio el mensaje como un json
+    #documentacion para el apartado del request: https://requests.readthedocs.io/en/latest/ 
     requests.post(final_url, json={"Log:":warning_message})
 
 def email_secure(email):
-  """
-  Funcion encargada de verificar si el mail esta anotado como seguro en la withelist.
-
-  Parámetros:
-        email (string): mail a verificar.
-  """
+  #unicamente acepta empresas en la lista blanca, esto sucede debido a que Empresa no es igual a EMPRESA, quiza alguien se suplantacion de identidad con dicho metodo. 
+  #la otra es que uso re.escape para no tomar quizas simbolos como * o de regedex y que sean interpetados (regedex inyection) por lo tanto re.escape toma literalmente el string https://ssojet.com/compare-escaping/
+  # r -> permite tomar el caracter como si fuera \caracter, tomandolo en crudo
+  # f permite insertar {variable externa}
   mail_accepted = [mail for mail in WHITELIST_ENTERPRISE if re.search(rf"@{re.escape(mail)}.com$", email)]
   if mail_accepted: return True
   return False
 
+#existen dos casos posibles, si el archivo es muy grande attachmentId no se encuentra vacio y tiene un id del archivo
+#si el archivo es pequeño, se guarda codificado dentro del data de body
 def get_file_from_body(body,service,mail_id):
-  """
-  Permite obtener el los datos decodificados del archivo, recibiendo el body del mail.
-
-  Parámetros:
-        body (object (MessagePartBody)): Body del Mail.
-        service (build("gmail", "v1", credentials=creds)): Servicio que permite comunicarse con Gmail API.
-        mail_id (string): Id del mail.
-  """
   if "data" in body:
     data = body["data"]
   elif "attachmentId" in body:
@@ -159,51 +113,35 @@ def get_file_from_body(body,service,mail_id):
   file_data = base64.urlsafe_b64decode(data.encode("UTF-8"))
   return file_data
 
+#funcion encarga de revisar los adjuntos en los emails
+#documentacion del attch https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages?hl=es-419#Message.MessagePart
 def check_attach(payload, header,sender,virustotal,service,mail_id):
-  """
-  Funcion encargada de chequear los adjuntos de los mails, verificando si son seguros contra VirusTotal si la flag esta activa y reportandolos en el log.
-  Documentacion sobre attachment del Mail https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages?hl=es-419#Message.MessagePart
-  Parámetros:
-        payload (object (MessagePart)): La estructura del correo electrónico analizada en las partes del mensaje.
-        header (string): encabezado del mensaje.
-        sender (string): de quien proviene el mensaje.
-        virustotal (Bool): Activa verificacion contra VirusTotal del file.
-        service (build("gmail", "v1", credentials=creds)): Servicio que permite comunicarse con Gmail API.
-        mail_id (string): Id del mail.
-  """
   if "parts" in payload:
     for part in payload["parts"]:
+      #si no encuentro nombre de archvio paso de largo (segun documentacion debe existir siempre, por eso si no lo tiene es que no tiene archivo adjunto)
       if not part["filename"]: continue
+      #obtenemos la data del archivo
       file_data = get_file_from_body(part["body"],service,mail_id)
+      #obtenemos el tipo debido al magic number
       file_type = filetype.guess(file_data).extension or "unknow" 
+      #si encuentro que esta en la extensiones, mando un mensaje al handler de lo que encontre!
       if file_type.lower() in CRITICAL_EXTENSIONS:
         file_handler_alert("File with extension "+file_type+" found on email from "+sender+" with subject"+header)
         if virustotal:
+          #procedo a abrir un hilo paralelo pora poder seguir verificando mails, la idea es no dejar en espera activa, el programa espera a que los hilos terminen
           hilo_vt = threading.Thread(
                         target=hilo_viruscheck_and_inform_log,
                         args=(file_data, file_type, sender, header))
           hilo_vt.start()
 
+#esta funcion opcional se abre en un hilo paralelo, que comprueba que el archivo sea seguro y lo informa en los los dentro de alertas.txt
 def hilo_viruscheck_and_inform_log(file_data, file_type, sender, header):
-  """
-  Funcion que maneja funcionamiento del hilo encargada de comprobar que el archivo sea seguro contra VirusTotal y informar lso resultados en el log.
-
-  Parámetros:
-        file_data (bytes): Bytes del archivo.
-        file_type (string): Tipo del archivo.
-        header (string): Encabezado del mensaje.
-        sender (string): De quien proviene el mensaje.
-  """
   result = virustotal_check(file_data) 
   file_handler_alert("VIRUSTOTAL RESULT ->"+ result +" from file with extension "+file_type+" found on email from "+sender+" with subject"+header )
 
+#documentacion de virus total api https://docs.virustotal.com/reference/files-scan 
 def virustotal_check(file_data):
-    """
-  Funcion encargada de comprobar que el archivo sea seguro contra VirusTotal mediante su API.
-  Documentacion de VirusTotal API https://docs.virustotal.com/reference/files-scan 
-  Parámetros:
-        file_data (bytes): Bytes del archivo.
-  """
+  #envio de archivo a analizar
   files = {"file": ("file", file_data)}
   headers = {"x-apikey": KEY_VIRUSTOTAL}
   response = requests.post(URL_TO_UPLOAD_FILE,files=files,headers=headers)
@@ -212,10 +150,12 @@ def virustotal_check(file_data):
     print("Error uploading file attachment:", response.text)
     return "upload_failed"
   else:
+    #la api de virus total devuelve el id del analisis para comprobar posteriormente
     id_analysis = response.json()["data"]["id"]
 
+  #el escaneo tarda, deberiamos hacer varios request pero por motivos practivos pongo un sleep, dejando en stand by este hilo
   sleep(15) 
-
+  #comprobacion de resultados
   url = URL_TO_GET_REPORT + id_analysis
   headers = {"x-apikey": KEY_VIRUSTOTAL}
   result = requests.get(url, headers=headers)
@@ -237,12 +177,16 @@ def virustotal_check(file_data):
 def main():
   creds = get_creds()
 
+  #parser es para agregar parametros por CLI, permitiendonos obtener luego lo introducido, en este caso tenemos un por defecto de 5 si no fue especificado
+  #pagina de la documentacion https://docs.python.org/3/library/argparse.html#module-argparse
   parser = argparse.ArgumentParser()
   parser.add_argument("--revise", help="amount of emails to revise", type=int) 
+  #ek action lo vuelve true si pongo el parametro
   parser.add_argument("--virustotal", help="this tag avilable virustotal scan", action="store_true") 
   parser.add_argument("--url", help="url to send notification", type=str) 
   parser.add_argument("--port", help="port to send notification", type=str) 
 
+  #asignacion de parametros,si no estan seteados pongo por defecto
   args = parser.parse_args()
   amount_emails = args.revise or 5 
   url = args.url or "http://127.0.0.1"
@@ -250,7 +194,9 @@ def main():
   virustotal = args.virustotal 
 
   try:
+    #llamado al gmail API, creando el servicio con las credenciales de OAuth
     service = build("gmail", "v1", credentials=creds)
+    #listado de mensajes
     emails_list = service.users().messages().list(userId="me", maxResults = amount_emails ).execute()
     emails = emails_list.get("messages", [])
 
@@ -258,12 +204,14 @@ def main():
       print("No emails")
       exit
     for mail in emails:
+      # para cada mensaje tenemos sus componentes https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages?hl=es-419#Message.MessagePart
       mail_id = mail["id"]
       message = service.users().messages().get(userId="me", id=mail_id).execute()
       sender = next(part["value"] for part in message["payload"]["headers"] if part["name"] == "From")
       if( not email_secure(sender) ):
         header = next(part["value"] for part in message["payload"]["headers"] if part["name"] == "Subject")
         body_message = decode_body_message(message["payload"])
+        #busco la palabra clave y la intento guardar, si existe disparo el handler para manejar la filtracion de la palabra,sino tendré un None.
         critical_word = search_words(header) or search_words(body_message)
         if critical_word:
           warning_message = get_message_critical_word(header, sender, critical_word)
@@ -271,6 +219,7 @@ def main():
           file_handler_alert(warning_message)
           send_notification_to_server(warning_message,url,port)
 
+        #parte de comprobacion de archivo adjunto
         check_attach(message["payload"], header,sender,virustotal,service,mail_id)
 
   except HttpError as error:
