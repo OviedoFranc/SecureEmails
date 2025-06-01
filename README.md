@@ -20,6 +20,7 @@ pip install --upgrade pip
 pip install py3
 pip install --upgrade google-auth-oauthlib requests-oauthlib
 pip install flask
+pip install filetype
 ```
 ---
 ## 🚀 Ejecución

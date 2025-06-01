@@ -18,5 +18,4 @@ def home():
         return jsonify(data_recv), 200
 
 if __name__ == '__main__':
-  app.config['JSON_AS_ASCII'] = False
   app.run(host='0.0.0.0', debug=True, port=5555)
