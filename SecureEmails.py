@@ -87,7 +87,7 @@ def search_words(text):
   Parámetros:
         text (string).
   """
-  word = text.split()
+  word = text.lower().split()
   for w in word:
     matches_critical = [critical for critical in CRITICAL_WORDS if re.search(rf"\b{re.escape(critical)}\b", w)]
     if matches_critical: return matches_critical[0]
@@ -127,9 +127,9 @@ def send_notification_to_server(warning_message,url,port):
         url (string): url del servidor.
         port (string): puerto de envio al servidor.
   """
-    final_url = url+":"+port
-    warning_message = warning_message+" - Date registered at " + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    requests.post(final_url, json={"Log:":warning_message})
+  final_url = url+":"+port
+  warning_message = warning_message+" - Date registered at " + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+  requests.post(final_url, json={"Log:":warning_message})
 
 def email_secure(email):
   """
@@ -159,6 +159,32 @@ def get_file_from_body(body,service,mail_id):
   file_data = base64.urlsafe_b64decode(data.encode("UTF-8"))
   return file_data
 
+def detect_extension(file_data, filename):
+  """
+  Detecta la extensión de un archivo:
+  Usa filetype (magic bytes).
+  Si falla, inspecciona firmas simples.
+  Por ultimo revisa el nombre del archivo.
+  Retorna la extensión o 'unknown'.
+  """
+  file_type = filetype.guess(file_data)
+  if file_type: return file_type.extension.lower()
+  if file_data.startswith(b'MZ'):
+    return 'exe'
+  elif file_data.startswith(b'\x50\x4B\x03\x04'):
+    return 'zip'
+  elif file_data.strip().startswith(b'#!/bin/bash'):
+    return 'sh'
+  elif b'@echo off' in file_data.lower() or file_data.strip().startswith(b'cmd'):
+    return 'bat'
+  elif b'function' in file_data and b'document' in file_data:
+    return 'js'
+  if filename:
+    file_type = os.path.splitext(filename)[1].lower().lstrip('.')
+    if file_type: return file_type
+
+  return 'unknown'
+
 def check_attach(payload, header,sender,virustotal,service,mail_id):
   """
   Funcion encargada de chequear los adjuntos de los mails, verificando si son seguros contra VirusTotal si la flag esta activa y reportandolos en el log.
@@ -175,7 +201,8 @@ def check_attach(payload, header,sender,virustotal,service,mail_id):
     for part in payload["parts"]:
       if not part["filename"]: continue
       file_data = get_file_from_body(part["body"],service,mail_id)
-      file_type = filetype.guess(file_data).extension or "unknow" 
+      filename = part["filename"]
+      file_type = detect_extension(file_data, filename)
       if file_type.lower() in CRITICAL_EXTENSIONS:
         file_handler_alert("File with extension "+file_type+" found on email from "+sender+" with subject"+header)
         if virustotal:
@@ -198,7 +225,7 @@ def hilo_viruscheck_and_inform_log(file_data, file_type, sender, header):
   file_handler_alert("VIRUSTOTAL RESULT ->"+ result +" from file with extension "+file_type+" found on email from "+sender+" with subject"+header )
 
 def virustotal_check(file_data):
-    """
+  """
   Funcion encargada de comprobar que el archivo sea seguro contra VirusTotal mediante su API.
   Documentacion de VirusTotal API https://docs.virustotal.com/reference/files-scan 
   Parámetros:

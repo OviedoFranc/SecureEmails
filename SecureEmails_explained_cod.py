@@ -1,7 +1,7 @@
 import os.path # permite obtener el path, os es del sistema operativo.
 import base64
 import re
-import filetype #https://pypi.org/project/filetype/ encargado de chequear el magic number
+import filetype
 import threading #https://docs.python.org/es/3.8/library/threading.html documentacion para hilos
 import requests
 import argparse
@@ -61,7 +61,8 @@ def decode_body_message(payload):
 
 #funcion encargada de buscar las claves criticas
 def search_words(text):
-  word = text.split()
+  #transformo todo el texto a minuscula y lo separo
+  word = text.lower().split()
   for w in word:
     #usando comprension de lista
     #encierro entre \b \b para que ejemplo .contraseña: lo tome correctamente! ya que no siempre las cosas esta separadas por respectivos espacios
@@ -113,6 +114,29 @@ def get_file_from_body(body,service,mail_id):
   file_data = base64.urlsafe_b64decode(data.encode("UTF-8"))
   return file_data
 
+#encargada de detectar la extension
+def detect_extension(file_data, filename):
+  #pruebo segun el magic   
+  file_type = filetype.guess(file_data)
+  if file_type: return file_type.extension.lower()
+  #detecto segun firma (estilo magic)
+  if file_data.startswith(b'MZ'):
+    return 'exe'
+  elif file_data.startswith(b'\x50\x4B\x03\x04'):
+    return 'zip'
+  elif file_data.strip().startswith(b'#!/bin/bash'):
+    return 'sh'
+  elif b'@echo off' in file_data.lower() or file_data.strip().startswith(b'cmd'):
+    return 'bat'
+  elif b'function' in file_data and b'document' in file_data:
+    return 'js'
+  #pruebo segun la extension
+  if filename:
+    file_type = os.path.splitext(filename)[1].lower().lstrip('.')
+    if file_type: return file_type
+
+  return 'unknown'
+
 #funcion encarga de revisar los adjuntos en los emails
 #documentacion del attch https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages?hl=es-419#Message.MessagePart
 def check_attach(payload, header,sender,virustotal,service,mail_id):
@@ -122,8 +146,9 @@ def check_attach(payload, header,sender,virustotal,service,mail_id):
       if not part["filename"]: continue
       #obtenemos la data del archivo
       file_data = get_file_from_body(part["body"],service,mail_id)
-      #obtenemos el tipo debido al magic number
-      file_type = filetype.guess(file_data).extension or "unknow" 
+      #obtenemos el filename para enviarlo a la funcion en caso de no detectar firma
+      filename = part["filename"]
+      file_type = detect_extension(file_data, filename)
       #si encuentro que esta en la extensiones, mando un mensaje al handler de lo que encontre!
       if file_type.lower() in CRITICAL_EXTENSIONS:
         file_handler_alert("File with extension "+file_type+" found on email from "+sender+" with subject"+header)

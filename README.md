@@ -1,6 +1,7 @@
 # API GMAIL (challenge-02)
 
-Permite revisar correos electrónicos en busqueda de actividad sensible y sospechosa, detectando la palabra contraseña o confidencial. Marcando la actividad en un archivo, imprimiendo en consonsola y enviando mediante un post a un servidor en flask
+Permite revisar correos electrónicos en busqueda de actividad sensible y sospechosa, detectando la palabra "contraseña" o "confidencial". Marcando la actividad en un archivo, imprimiendo en consonsola y enviando mediante un post a un servidor en 
+Ademas permite controlas contra VirusTotal si el archivo esta infectado
 
 ---
 
@@ -50,9 +51,19 @@ py SecureEmails.py
 
 Ejemplo por defecto
 ```bash
+py SecureEmails.py
+```
+
+Ejemplo por con comandos
+```bash
 py SecureEmails.py --revise 5 --url http://127.0.0.1 --port 5555 --virustotal
 ```
 
 ## Mapa del Flujo
 
-![Mapa del flujo del Programa](Mapa.png)
+![Mapa del flujo del Programa](images/Mapa.png)
+
+## Fotos test
+![Test alertas.txt](images/Image-test.png)
+![Test webhook](images/Image-log-server.png)
+![Test Mail](images/Image-mail.png)
